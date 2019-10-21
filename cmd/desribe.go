@@ -17,9 +17,54 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	//"encoding/json"
+	//"gopkg.in/yaml.v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
+
+type stackInfo struct {
+	name string
+	version string
+}
+
+type probeInfo struct {
+	name string
+	failureThreshold int
+	scheme string
+	path string
+	initialDelay int
+	period int
+	succcessThreshold int
+	timeoutSeconds int
+}
+
+type deploymentInfo struct {
+	clusterName string
+	nodeName string
+	namespace string
+	podName string
+	phase string
+	hostIP string
+	startTime string
+}
+
+type describeInfo struct {
+	stack stackInfo
+	deployment deploymentInfo
+	liveness probeInfo
+	readiness probeInfo
+	container containerInfo
+}
+
+type containerInfo struct {
+	containerName string
+	imageNameAndTag string
+	exposedPorts []string
+	envVars map[string]string
+	restartCount int
+	volumeMounts map[string]string
+}
 
 type describeCommandConfig struct {
 	*RootCommandConfig
