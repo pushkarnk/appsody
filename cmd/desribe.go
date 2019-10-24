@@ -18,53 +18,61 @@ import (
 	"fmt"
 	"strings"
 	//"encoding/json"
-	//"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
-type stackInfo struct {
-	name string
-	version string
+type EnvVar struct {
+	name string `yaml:"name"`
+	value string `yaml:"value"`
 }
 
-type probeInfo struct {
-	name string
-	failureThreshold int
-	scheme string
-	path string
-	initialDelay int
-	period int
-	succcessThreshold int
-	timeoutSeconds int
+type VolumeMount struct {
+	Name      string `yaml:"name"`
+	MountPath string `yaml:"mountPath"`
 }
 
-type deploymentInfo struct {
-	clusterName string
-	nodeName string
-	namespace string
-	podName string
-	phase string
-	hostIP string
-	startTime string
+type AppInfo struct {
+	StackInfo struct {	
+		Name string `yaml:"name"`
+		Version string `yaml:"version"`
+	} `yaml:"stackInfo"`
+	DeploymentInfo struct {
+		NodeName string	   `yaml:"nodeName" json:"nodeName"`				
+		PodName string	   `yaml:"podName" json:"podName"`
+		Phase string	   `yaml:"phase" json:"phase"`
+		HostIP string	   `yaml:"hostIP" json:"hostIP"`
+		StartTime string   `yaml:"startTime" json:"startTime"`
+        	LivenessProbe string `yaml:"livenessProbe,flow" json:"livenessProbe"`
+        	ReadinessProbe string `yaml:"readinessProbe" json:"readinessProbe"`
+	} `yaml:"deploymentInfo" json:"deploymentInfo"`
+	ContainerInfo struct {
+	        ContainerName string 	       `yaml:"name" json:"name"`
+        	ImageName string               `yaml:"imageName" json:"imageName"`
+        	ExposedPorts []string	       `yaml:"exposedPorts" json:"exposedPorts"`
+        	EnvVars []EnvVar      `yaml:"envVars" json:"envVars"`
+        	RestartCount int 	       `yaml:"restartCount" json:"restartCount"`
+        	VolumeMounts []VolumeMount `yaml:"volumenMounts" json:"volumeMounts"`
+	} `yaml:"containerInfo" json:"containerInfo"`
 }
 
-type describeInfo struct {
-	stack stackInfo
-	deployment deploymentInfo
-	liveness probeInfo
-	readiness probeInfo
-	container containerInfo
-}
-
-type containerInfo struct {
-	containerName string
-	imageNameAndTag string
-	exposedPorts []string
-	envVars map[string]string
-	restartCount int
-	volumeMounts map[string]string
-}
+var template = `
+stackInfo:
+  name: unknown 
+  version: unknown 
+deploymentInfo:
+  nodeName: unknown 
+  phase: unknown 
+  hostIP: unknown 
+  startTime: unknown 
+  livenessProbe: unknown
+  readinessProbe: unknown 
+containerInfo;
+  containerName: unknown
+  imageName: unknown
+  restartCount: 0
+`
 
 type describeCommandConfig struct {
 	*RootCommandConfig
@@ -99,8 +107,95 @@ func describe(config *describeCommandConfig) error {
 		return errors.Errorf("Invalid format string - %s. Please use \"json\" or \"yaml\" only", outputFormat)
 	}
 	podName, _ := getRunningPod("test8")
-	cmdParms := []string{strings.TrimSuffix(podName, "\n"), "-o", outputFormat}
-	description, _ := KubeGet(cmdParms, "default", false)
-        fmt.Println(description)
+
+	info := AppInfo{}
+	err := yaml.Unmarshal([]byte(template), &info)
+	if err == nil {
+		fmt.Printf("%v\n", info)
+	}
+
+	output, _ := KubeGet([]string{strings.TrimSuffix(podName, "\n"), "-o", "yaml"}, "default", false)
+	var data map[string]interface{}
+	error := yaml.Unmarshal([]byte(output), &data)	
+	if error != nil {
+		fmt.Println(error)
+	}
+
+        populateStackInfo(&info, data)
+	populateDeploymentInfo(&info, data)
+	populateProbesInfo(&info, strings.TrimSuffix(podName, "\n"), "default")
+
+        yaml, err := yaml.Marshal(&info)
+        if err == nil {
+		fmt.Println(string(yaml))
+	}
 	return nil 
+}
+
+func populateProbesInfo(info *AppInfo, podname string, namespace string) {
+	livenessProbe, readinessProbe := getProbes(podname, namespace)
+        info.DeploymentInfo.LivenessProbe = strings.ReplaceAll(strings.ReplaceAll(livenessProbe, " ","|"), "#", "")
+	info.DeploymentInfo.ReadinessProbe = strings.ReplaceAll(strings.ReplaceAll(readinessProbe, " ", "|"), "#", "")
+}
+
+func populateStackInfo(info *AppInfo, data map[string]interface{}) {
+	if metadata, ok := data["metadata"].(map[interface{}]interface{}); ok {
+		if labels, ok := metadata["labels"].(map[interface{}]interface{}); ok {
+			if name, ok := labels["app.appsody.dev/stack"].(string); ok {			
+				info.StackInfo.Name = name
+			}
+
+			if version, ok := labels["app.kubernetes.io/version"].(string); ok {
+				info.StackInfo.Version = version 
+			}
+		}
+	}
+}
+
+
+func populateDeploymentInfo(info *AppInfo, data map[string]interface{}) {
+	if spec, ok := data["spec"].(map[interface{}]interface{}); ok {
+		if nodeName, ok := spec["nodeName"].(string); ok {
+			info.DeploymentInfo.NodeName = nodeName
+		}
+	}
+
+	if status, ok := data["status"].(map[interface{}]interface{}); ok {
+		if phase, ok := status["phase"].(string); ok {
+			info.DeploymentInfo.Phase = phase
+		}
+
+		if hostIP, ok := status["hostIP"].(string); ok {
+			info.DeploymentInfo.HostIP = hostIP
+		}
+
+		if startTime, ok := status["startTime"].(string); ok {
+			info.DeploymentInfo.StartTime = startTime
+		}
+	}
+
+	if metadata, ok := data["metadata"].(map[interface{}]interface{}); ok {
+		if name, ok := metadata["name"].(string); ok {
+			info.DeploymentInfo.PodName = name
+		}
+	}
+}
+
+func getProbes(podname string, namespace string) (liveness string, readiness string) {
+	var livenessProbe = "unknown"
+	var readinessProbe = "unknown"
+	output, kerror := KubeDescribe(podname, namespace)
+	if kerror != nil {
+		fmt.Println(kerror)
+		return livenessProbe, readinessProbe
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Readiness:") {
+			readinessProbe = strings.TrimSpace(strings.SplitAfter(line, "Readiness:")[1])
+		}
+		if strings.Contains(line, "Liveness:") {
+			livenessProbe = strings.TrimSpace(strings.SplitAfter(line, "Liveness:")[1])
+		}
+	}
+	return livenessProbe, readinessProbe
 }

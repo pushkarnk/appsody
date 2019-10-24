@@ -1339,7 +1339,7 @@ func DockerRunBashCmd(options []string, image string, bashCmd string, config *Ro
 
 //KubeGet issues kubectl get <arg>
 func KubeGet(args []string, namespace string, dryrun bool) (string, error) {
-	Info.log("Attempting to get resource from Kubernetes ...")
+	Debug.log("Attempting to get resource from Kubernetes ...")
 	kcmd := "kubectl"
 	kargs := []string{"get"}
 	kargs = append(kargs, args...)
@@ -1351,7 +1351,7 @@ func KubeGet(args []string, namespace string, dryrun bool) (string, error) {
 		Info.log("Dry run - skipping execution of: ", kcmd, " ", strings.Join(kargs, " "))
 		return "", nil
 	}
-	Info.log("Running command: ", kcmd, " ", strings.Join(kargs, " "))
+	Debug.log("Running command: ", kcmd, " ", strings.Join(kargs, " "))
 	execCmd := exec.Command(kcmd, kargs...)
 	kout, kerr := execCmd.Output()
 	if kerr != nil {
@@ -1877,4 +1877,19 @@ func Targz(source, target string) error {
 			_, err = io.Copy(tarball, file)
 			return err
 		})
+}
+
+func KubeDescribe(podname string, namespace string) (string, error) {
+        kcmd := "kubectl"
+        kargs := []string{"describe", podname}
+        if namespace != "" {
+                kargs = append(kargs, "--namespace", namespace)
+        }
+	Info.log("Running command: ", kcmd, " ", strings.Join(kargs, " "))
+        execCmd := exec.Command(kcmd, kargs...)
+        kout, kerr := execCmd.Output()
+        if kerr != nil {
+                return "", errors.Errorf("kubectl describe failed: %s", string(kout[:]))
+        }
+        return string(kout[:]), nil
 }
